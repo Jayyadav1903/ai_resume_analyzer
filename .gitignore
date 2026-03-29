@@ -1,0 +1,36 @@
+# =========================
+# SECRETS & ENV VARIABLES (CRITICAL)
+# =========================
+.env
+.env.*
+*.local
+
+# =========================
+# BACKEND (Python / FastAPI / Database)
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+.venv/
+*.sqlite3
+uploaded_resumes/
+.pytest_cache/
+
+# =========================
+# FRONTEND (Node / React / Vite)
+# =========================
+node_modules/
+dist/
+dist-ssr/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# =========================
+# OS & EDITOR FILES
+# =========================
+.DS_Store
+.vscode/
+.idea/
