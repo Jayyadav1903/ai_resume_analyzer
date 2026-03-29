@@ -3,7 +3,7 @@ from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
 from security import get_password_hash, verify_password, create_access_token, SECRET_KEY, ALGORITHM
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import sessionmaker, Session
-from pydantic import BaseModel,EmailStr
+from pydantic import BaseModel,EmailStr, Field
 from database import engine, User, ResumeAnalysis
 import os
 import shutil
@@ -58,7 +58,7 @@ app.add_middleware(
 class UserCreate(BaseModel):
     name: str
     email: EmailStr
-    password: str
+    password: str = Field(min_length=8, description="Password must be at least 8 characters long")
     
 class UserResponse(BaseModel):
     id: int
@@ -166,6 +166,8 @@ def get_my_history(
 
 
 #Route to handle resume uploads (Added to the /api/v1/ path)
+MAX_FILE_SIZE = 5 * 1024 * 1024 # 5 Megabytes
+
 @app.post("/api/v1/upload-resume/")
 async def upload_resume(
     file: UploadFile = File(...),
@@ -173,6 +175,13 @@ async def upload_resume(
     current_user: User = Depends(get_current_user),
     db:Session = Depends(get_db)
     ):
+    
+    file.file.seek(0, 2) # Go to the end of the file
+    file_size = file.file.tell() # Get the size
+    file.file.seek(0) # IMPORTANT: Reset the cursor back to the beginning!
+    
+    if file_size > MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail="File too large. Maximum size is 5MB.")
     
     #1. Validate file type
     if not file.filename.endswith(('.pdf','.docx')):
