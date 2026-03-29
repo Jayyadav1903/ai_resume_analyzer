@@ -15,6 +15,9 @@ interface ReportDetail {
 }
 
 function App() {
+  
+  const API_URL = import.meta.env.VITE_API_URL || "https://ai-resume-analyzer-2apu.onrender.com";
+  
   // --- AUTH STATE ---
   const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
   const [authMode, setAuthMode] = useState<AuthMode>('login');
@@ -48,7 +51,7 @@ function App() {
 
     try {
       if (authMode === 'signup') {
-        await axios.post('http://127.0.0.1:8000/api/v1/auth/signup', { name, email, password });
+        await axios.post(`${API_URL}/api/v1/auth/signup`, { name, email, password });
         setAuthMode('login'); 
         setAuthError('Signup successful! Please log in.');
       } else {
@@ -56,7 +59,7 @@ function App() {
         formData.append('username', email);
         formData.append('password', password);
 
-        const response = await axios.post('http://127.0.0.1:8000/api/v1/auth/login', formData, {
+        const response = await axios.post(`${API_URL}/api/v1/auth/login`, formData, {
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
         });
 
@@ -75,7 +78,7 @@ function App() {
     setShowHistory(true);
     
     try {
-      const response = await axios.get("http://127.0.0.1:8000/api/v1/my-history/", {
+      const response = await axios.get(`${API_URL}/api/v1/my-history/`, {
         headers: { "Authorization": `Bearer ${token}` },
       });
       setHistory(response.data);
@@ -109,7 +112,7 @@ function App() {
     formData.append("job_description", jobDescription);
 
     try {
-      const response = await axios.post("http://127.0.0.1:8000/api/v1/upload-resume/", formData, {
+      const response = await axios.post(`${API_URL}/api/v1/upload-resume/`, formData, {
         headers: { 
           "Content-Type": "multipart/form-data",
           "Authorization": `Bearer ${token}` 
