@@ -1,3 +1,9 @@
+import os
+from dotenv import load_dotenv
+load_dotenv()
+SECRET_KEY = os.getenv("SECRET_KEY")
+ALGORITHM = "HS256"
+
 from fastapi import FastAPI, Depends, UploadFile, File, Form, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
 from security import get_password_hash, verify_password, create_access_token, SECRET_KEY, ALGORITHM
@@ -5,17 +11,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import sessionmaker, Session
 from pydantic import BaseModel,EmailStr, Field
 from database import engine, User, ResumeAnalysis
-import os
+
 import shutil
 import fitz
 import json
 import jwt
 from google import genai
 from google.genai import types
-from dotenv import load_dotenv
 
 # Load the secret key from the .env file
-load_dotenv()
 
 # --- 1. DATABASE SETUP ---
 # This creates a "factory" for database sessions
@@ -39,15 +43,16 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 app = FastAPI()
 
 #1. URLs that are allowed to interact with this API
-#origins = [
-#    "https://localhost:5173",#React App
-#    "https://127.0.0.1:5173",
-#]
+origins = [
+    "https://localhost:5173",#React App
+    "https://127.0.0.1:5173",
+    "https://ai-resume-analyzer-seven-psi.vercel.app",
+]
 
 #2. Add the CORS middleware to your FastAPI app
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"], # Allows all methods (GET, POST, etc.)
     allow_headers=["*"], # Allows all headers
