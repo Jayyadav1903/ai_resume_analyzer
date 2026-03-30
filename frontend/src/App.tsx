@@ -6,15 +6,6 @@ import autoTable from 'jspdf-autotable';
 type AppStep = 'upload' | 'loading' | 'results';
 type AuthMode = 'login' | 'signup';
 
-interface ReportDetail {
-  id?: number;
-  score: number;
-  job_description: string;
-  skills: string[];
-  missing_skills: string[];
-  suggestions: string[];
-}
-
 function App() {
   const API_URL = "https://ai-resume-analyzer-2apu.onrender.com";
 
@@ -84,11 +75,6 @@ function App() {
   const [missingSkills, setMissingSkills] = useState<string[]>([]);
   const [suggestions, setSuggestions] = useState<string[]>([]);
 
-  const [history, setHistory] = useState<ReportDetail[]>([]);
-  const [showHistory, setShowHistory] = useState(false);
-  const [selectedReport, setSelectedReport] = useState<ReportDetail | null>(null);
-  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
-
   // --- HANDLERS ---
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -157,28 +143,13 @@ function App() {
     }
   };
 
-  const fetchMyHistory = async () => {
-    setIsLoadingHistory(true);
-    setShowHistory(true);
-    try {
-      const response = await axios.get(`${API_URL}/api/v1/my-history/`, {
-        headers: { "Authorization": `Bearer ${token}` },
-      });
-      setHistory(response.data);
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setIsLoadingHistory(false);
-    }
-  };
-
   const handleLogout = () => {
     localStorage.removeItem('token');
     setToken(null);
     setStep('upload');
   };
 
-  // --- UI COMPONENTS ---
+  // --- UI ---
   if (!token) {
     return (
       <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4">
@@ -228,76 +199,27 @@ function App() {
         {step === 'results' && (
           <div className="animate-fade-in">
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-bold text-slate-800">Analysis Results</h2>
+              <h2 className="text-2xl font-bold text-slate-800">Results</h2>
               <div className="flex gap-2">
                 <button onClick={generatePDF} className="bg-green-600 text-white px-4 py-2 rounded-lg font-bold text-sm hover:bg-green-700 shadow-md">Download PDF</button>
-                <button onClick={() => setStep('upload')} className="bg-blue-50 text-blue-600 px-4 py-2 rounded-lg font-bold text-sm hover:bg-blue-100">New Analysis</button>
+                <button onClick={() => setStep('upload')} className="bg-blue-50 text-blue-600 px-4 py-2 rounded-lg font-bold text-sm hover:bg-blue-100">New</button>
               </div>
             </div>
-            <div className="bg-slate-50 p-6 rounded-2xl mb-8 border border-slate-200">
-               <div className="flex justify-between items-end mb-2">
-                  <span className="text-xs font-bold text-slate-500 tracking-widest uppercase">Match Score</span>
-                  <span className={`text-3xl font-black ${score >= 75 ? 'text-green-600' : 'text-blue-600'}`}>{score}%</span>
-               </div>
-               <div className="w-full bg-slate-200 h-4 rounded-full overflow-hidden">
-                  <div className="bg-blue-500 h-full transition-all duration-1000" style={{ width: `${score}%` }}></div>
-               </div>
+            <div className="bg-slate-50 p-6 rounded-2xl mb-8 border border-slate-200 text-center">
+               <span className="text-xs font-bold text-slate-500 tracking-widest uppercase">Match Score</span>
+               <div className="text-5xl font-black text-blue-600 mt-2">{score}%</div>
             </div>
-            {/* Detected Skills */}
+            
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
                <div className="p-4 bg-green-50 rounded-xl border border-green-100">
                   <h4 className="font-bold text-green-700 mb-2">Matched Skills</h4>
-                  <div className="flex flex-wrap gap-1">
-                    {skills.map((s, i) => <span key={i} className="bg-white px-2 py-1 rounded text-xs border border-green-200 text-green-800">{s}</span>)}
-                  </div>
+                  <p className="text-sm text-green-800">{skills.join(', ') || "No specific matches"}</p>
                </div>
                <div className="p-4 bg-red-50 rounded-xl border border-red-100">
                   <h4 className="font-bold text-red-700 mb-2">Missing Skills</h4>
-                  <div className="flex flex-wrap gap-1">
-                    {missingSkills.map((s, i) => <span key={i} className="bg-white px-2 py-1 rounded text-xs border border-red-200 text-red-800">{s}</span>)}
-                  </div>
+                  <p className="text-sm text-red-800">{missingSkills.join(', ') || "None identified"}</p>
                </div>
             </div>
-          </div>
-        )}
-      </div>
-
-      {/* --- HISTORY PANEL (Fixes TS errors) --- */}
-      <div className="w-full max-w-2xl flex flex-col items-center">
-        <button 
-          onClick={fetchMyHistory}
-          className="text-slate-400 hover:text-white font-bold text-sm transition-colors mb-4"
-        >
-          {showHistory ? "Hide History" : "View Past Analyses"}
-        </button>
-
-        {showHistory && (
-          <div className="w-full bg-slate-800 p-6 rounded-xl border border-slate-700 shadow-xl text-left">
-            {selectedReport ? (
-              <div>
-                <button onClick={() => setSelectedReport(null)} className="text-blue-400 mb-4 font-bold">← Back</button>
-                <h4 className="text-white font-bold mb-2">Analysis Detail</h4>
-                <p className="text-slate-300 text-sm">{selectedReport.job_description}</p>
-              </div>
-            ) : (
-              <div>
-                <h3 className="text-lg font-bold text-white mb-4">Your History</h3>
-                {isLoadingHistory ? (
-                  <p className="text-slate-400 animate-pulse">Loading...</p>
-                ) : history.length === 0 ? (
-                  <p className="text-slate-500 italic">No history found.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {history.map((h, i) => (
-                      <div key={i} onClick={() => setSelectedReport(h)} className="p-4 bg-slate-700 rounded-lg flex justify-between items-center cursor-pointer hover:bg-slate-600">
-                        <span className="text-slate-200 text-sm">Analysis #{h.id || i+1}</span>
-                        <span className="font-black text-blue-400">{h.score}%</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
           </div>
         )}
       </div>
