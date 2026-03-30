@@ -43,6 +43,7 @@ class ResumeAnalysis(Base):
     
     job_description = Column(Text, nullable=True)     
     score = Column(Integer)
+    status = Column(String,default="processing")
     
     # We use the JSON column type to store the arrays of strings sent by the AI
     skills = Column(JSON)                             

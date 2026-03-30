@@ -1,14 +1,18 @@
+from email.mime import text
 import os
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import FastAPI, Depends, UploadFile, File, Form, HTTPException, status
+from fastapi import FastAPI, Depends, UploadFile, File, Form, HTTPException, status, BackgroundTasks, Request
 from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
 from security import get_password_hash, verify_password, create_access_token, SECRET_KEY, ALGORITHM
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import sessionmaker, Session
 from pydantic import BaseModel,EmailStr, Field
 from database import engine, User, ResumeAnalysis
+from docx import Document
+from slowapi  import Limiter,_rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
 
 import shutil
 import fitz
@@ -116,6 +120,76 @@ def extract_text_from_pdf(file_path) -> str:
         return ""        
      
      
+def extract_text_from_docx(file_path) -> str:
+    try :
+        doc = Document(file_path)
+        return "\n".join([para.text for para in doc.paragraphs])
+    except Exception as e:
+        print(f"Error reading DOCX: {e}")
+        return ""    
+ 
+ 
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(429,_rate_limit_exceeded_handler)
+     
+def run_ai_analysis(analysis_id: int, extracted_text:str, job_description: str):
+    db = SessionLocal()
+    try:
+        client = genai.Client()
+        if job_description.strip():
+                prompt = f"""
+                You are an expert ATS. Compare the following resume against the provided Job Description.
+                Return ONLY valid JSON in this exact format:
+                {{
+                  "score": number (0-100, representing the Match Percentage between the resume and JD),
+                  "skills": ["skill1", "skill2"] (key skills found in the resume that MATCH the JD),
+                  "missing_skills": ["skill1", "skill2"] (crucial skills required by the JD that are MISSING from the resume),
+                  "suggestions": ["suggestion1", "suggestion2"] (actionable tips to tailor the resume for this specific job)
+                }}
+                Job Description:
+                {job_description}
+                Resume:
+                {extracted_text}
+                """
+                
+        else:
+                #Standard Prompt  
+                prompt = f"""
+                Analyze the following resume.
+                Return ONLY valid JSON in this exact format:
+                {{
+                "score": number (0-100),
+                "skills": ["skill1", "skill2"],
+                "missing_skills": ["skill1", "skill2"],
+                "suggestions": ["suggestion1", "suggestion2"]
+                }}
+                Resume:
+                {extracted_text}
+                """
+        response = client.models.generate_content(model='gemini-2.5-flash',
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                ),
+                )
+            
+        ai_analysis = json.loads(response.text)
+        
+        analysis = db.query(ResumeAnalysis).filter(ResumeAnalysis.id == analysis_id).first()
+        
+        if analysis:
+            analysis.score = ai_analysis.get("score",0)
+            analysis.skills = ai_analysis.get("skills",[])
+            analysis.missing_skills = ai_analysis.get("missing_skills",[])
+            analysis.suggestions = ai_analysis.get("suggestions", [])
+            db.commit()
+    except Exception as e:
+        print(f"Error in AI analysis: {e}")
+    finally:
+        db.close()    
+                
+     
 # Create a basic GET route
 @app.get("/")
 def read_root():
@@ -178,7 +252,10 @@ def get_my_history(
 MAX_FILE_SIZE = 5 * 1024 * 1024 # 5 Megabytes
 
 @app.post("/api/v1/upload-resume/")
+@limiter.limit("5/minute")
 async def upload_resume(
+    request: Request,
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     job_description: str =Form(""),
     current_user: User = Depends(get_current_user),
@@ -196,89 +273,54 @@ async def upload_resume(
     if not file.filename.endswith(('.pdf','.docx')):
         return{"error":"Only PDF or DOCX files are allowed."}
     
-    #2. Save file
     file_path = os.path.join(UPLOAD_DIR, file.filename)
     with open(file_path,"wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
         
-    #3. Extract the text!    
+    #2. Extract the text!    
     extracted_text = ""
     if file.filename.endswith('.pdf'):
         extracted_text = extract_text_from_pdf(file_path)
     elif file.filename.endswith('.docx'):
-        # Stop the function here and tell the user DOCX isn't ready
-        return {"error": "DOCX extraction coming soon! Please upload a PDF."}
+        extracted_text = extract_text_from_docx(file_path)
     
-    # 4. SEND TO GEMINI FLASH!
-    ai_analysis = "Analysis failed."
-    if extracted_text:
-        try:
-            # Initialize the NEW Google GenAI Client
-            client = genai.Client()
+    # 3. Create a placeholder record in the DB    
+    new_analysis = ResumeAnalysis(
+            user_id=current_user.id,
+            job_description=job_description,
+            score=0,
+            skills=[],
+            missing_skills=[],
+            suggestions=[]
+        )
+    db.add(new_analysis)
+    db.commit()
+    db.refresh(new_analysis)
             
-            # Dynamic Prompt
-            if job_description.strip():
-                prompt = f"""
-                You are an expert ATS. Compare the following resume against the provided Job Description.
-                Return ONLY valid JSON in this exact format:
-                {{
-                  "score": number (0-100, representing the Match Percentage between the resume and JD),
-                  "skills": ["skill1", "skill2"] (key skills found in the resume that MATCH the JD),
-                  "missing_skills": ["skill1", "skill2"] (crucial skills required by the JD that are MISSING from the resume),
-                  "suggestions": ["suggestion1", "suggestion2"] (actionable tips to tailor the resume for this specific job)
-                }}
-                Job Description:
-                {job_description}
-                Resume:
-                {extracted_text}
-                """
-                
-            else:
-                #Standard Prompt  
-                prompt = f"""
-                Analyze the following resume.
-                Return ONLY valid JSON in this exact format:
-                {{
-                "score": number (0-100),
-                "skills": ["skill1", "skill2"],
-                "missing_skills": ["skill1", "skill2"],
-                "suggestions": ["suggestion1", "suggestion2"]
-                }}
-                Resume:
-                {extracted_text}
-                """
-            
-            # Generate the response
-            response = client.models.generate_content(model='gemini-2.5-flash',
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_mime_type="application/json",
-                ),
-                )
-            
-            ai_analysis = json.loads(response.text)
-            
-            # --- SAVE TO DATABASE ---
-            new_analysis = ResumeAnalysis(
-                user_id=current_user.id,
-                job_description=job_description,
-                score=ai_analysis.get("score", 0),
-                skills=ai_analysis.get("skills", []),
-                missing_skills=ai_analysis.get("missing_skills", []),
-                suggestions=ai_analysis.get("suggestions", [])
-                )
-            db.add(new_analysis)
-            db.commit()
-            db.refresh(new_analysis)
-            
-        except Exception as e:
-            print(f"Gemini API Error: {e}")
-            ai_analysis = {"error":"Could not reach the AI at this time."}
-
+    # 4. Trigger the background task and respond IMMEDIATELY   
+    background_tasks.add_task(run_ai_analysis, new_analysis.id, extracted_text, job_description)
+    
     #  Return everything to React
     return {
-        "filename": file.filename, 
-        "message": "File analyzed successfully!",
-        "extracted_text": extracted_text,
-        "ai_analysis": ai_analysis # <-- Sending the AI's thoughts back to the frontend!
+        "analysis_id": new_analysis.id,
+        "message": "Analysis started in background. Please check status shortly."
     }
+    
+@app.get("/api/v1/analysis-status/{analysis_id}")
+def get_analysis_status(
+    analysis_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    analysis = db.query(ResumeAnalysis).filter(ResumeAnalysis.id == analysis_id,ResumeAnalysis.user_id == current_user.id).first()
+    
+    if not analysis:
+        raise HTTPException(status_code=404, detail="Analysis not found")
+    
+    # If the score is still 0, it's likely still processing
+    return {
+        "is_ready": analysis.score > 0,
+        "data": analysis if analysis.score > 0 else None
+    }   
+            
+    

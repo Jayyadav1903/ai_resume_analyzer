@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import axios from 'axios';
+import { jsPDF } from "jspdf";
+import autoTable from 'jspdf-autotable';
 
 type AppStep = 'upload' | 'loading' | 'results';
 type AuthMode = 'login' | 'signup';
 
-// --- TYPE DEFINITIONS ---
 interface ReportDetail {
   id?: number;
   score: number;
@@ -15,9 +16,57 @@ interface ReportDetail {
 }
 
 function App() {
-  
-  const API_URL ="https://ai-resume-analyzer-2apu.onrender.com";
-  
+  const API_URL = "https://ai-resume-analyzer-2apu.onrender.com";
+
+  const generatePDF = () => {
+    const doc = new jsPDF();
+    const timestamp = new Date().toLocaleDateString();
+
+    //1. Header & Title
+    doc.setFontSize(20);
+    doc.setTextColor(40, 44, 52);
+    doc.text("AI Resume Analysis Report", 14, 22);
+
+    doc.setFontSize(10);
+    doc.setTextColor(100);
+    doc.text(`Generated on: ${timestamp}`, 14, 30);
+
+    //2. Score Section
+    doc.setFontSize(14);
+    doc.setTextColor(0, 102, 204);
+    doc.text(`Overall Match Score: ${score}%`, 14, 45);
+
+    //3. Skills Table
+    autoTable(doc, {
+      startY: 55,
+      head: [['Category', 'Details']],
+      body: [
+        ['Matched Skills' , skills.join(',') || 'None detected'],
+        ['Missing Skills',missingSkills.join(',') || 'None identified'],
+      ],
+      headStyles: {fillColor: [51,65,85]},
+    });
+
+    //4. Suggestions List
+    const finalY = (doc as any).lastAutoTable.finalY + 10;
+    doc.setFontSize(14);
+    doc.text("Actionable Steps to Improve:",14, finalY);
+
+    doc.setFontSize(11);
+    doc.setTextColor(60);
+    let currentY = finalY + 10;
+
+    suggestions.forEach((step, index) => {
+      const splitText = doc.splitTextToSize(`${index + 1}.${step}`,180);
+      doc.text(splitText, 14, currentY);
+      currentY += (splitText.Text.length * 7);
+    } );
+
+    //5. Save the PDF
+    doc.save(`Resume_Analysis_${timestamp.replace(/\//g, '_')}.pdf`);
+
+  };
+
   // --- AUTH STATE ---
   const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
   const [authMode, setAuthMode] = useState<AuthMode>('login');
@@ -37,56 +86,36 @@ function App() {
   const [skills, setSkills] = useState<string[]>([]);
   const [missingSkills, setMissingSkills] = useState<string[]>([]);
   const [suggestions, setSuggestions] = useState<string[]>([]);
-  
+
   // --- HISTORY STATE ---
   const [history, setHistory] = useState<ReportDetail[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [selectedReport, setSelectedReport] = useState<ReportDetail | null>(null);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
 
-  // --- AUTHENTICATION HANDLERS ---
+  // --- AUTH HANDLERS ---
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError('');
-
     try {
       if (authMode === 'signup') {
         await axios.post(`${API_URL}/api/v1/auth/signup`, { name, email, password });
-        setAuthMode('login'); 
+        setAuthMode('login');
         setAuthError('Signup successful! Please log in.');
       } else {
         const formData = new URLSearchParams();
         formData.append('username', email);
         formData.append('password', password);
-
         const response = await axios.post(`${API_URL}/api/v1/auth/login`, formData, {
           headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
         });
-
         const accessToken = response.data.access_token;
         localStorage.setItem('token', accessToken);
-        localStorage.setItem('user_id', response.data.user_id); 
+        localStorage.setItem('user_id', response.data.user_id);
         setToken(accessToken);
       }
     } catch (error: any) {
       setAuthError(error.response?.data?.detail || "Authentication failed.");
-    }
-  };
-
-  const fetchMyHistory = async () => {
-    setIsLoadingHistory(true);
-    setShowHistory(true);
-    
-    try {
-      const response = await axios.get(`${API_URL}/api/v1/my-history/`, {
-        headers: { "Authorization": `Bearer ${token}` },
-      });
-      setHistory(response.data);
-    } catch (error: any) {
-      console.error("Failed to fetch history:", error);
-      alert(`Error loading history: ${error.response?.data?.detail || error.message}`); 
-    } finally {
-      setIsLoadingHistory(false);
     }
   };
 
@@ -95,50 +124,6 @@ function App() {
     localStorage.removeItem('user_id');
     setToken(null);
     resetApp();
-  };
-
-  // --- RESUME UPLOAD HANDLER ---
-  const handleUpload = async () => {
-    if (!file) {
-      setErrorMessage("Please select a resume file first.");
-      return;
-    }
-
-    setStep('loading');
-    setErrorMessage('');
-    
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("job_description", jobDescription);
-
-    try {
-      const response = await axios.post(`${API_URL}/api/v1/upload-resume/`, formData, {
-        headers: { 
-          "Content-Type": "multipart/form-data",
-          "Authorization": `Bearer ${token}` 
-        },
-      });
-      
-      if (response.data.ai_analysis && !response.data.ai_analysis.error) {
-        const analysis = response.data.ai_analysis;
-        setScore(analysis.score || 0);
-        setSkills(analysis.skills || []);
-        setMissingSkills(analysis.missing_skills || []);
-        setSuggestions(analysis.suggestions || []);
-        setStep('results');
-      } else {
-        throw new Error(response.data.error || "The AI could not analyze this resume.");
-      }
-      
-    } catch (error: any) {
-      console.error("Upload error:", error);
-      if (error.response?.status === 401) {
-        handleLogout(); 
-      } else {
-        setErrorMessage(error.message || "Something went wrong during upload.");
-        setStep('upload'); 
-      }
-    }
   };
 
   const resetApp = () => {
@@ -152,49 +137,122 @@ function App() {
     setStep('upload');
   };
 
-  // ==========================================
-  // VIEW 1: THE UNAUTHENTICATED SCREEN
-  // ==========================================
+  // --- NEW POLLING FUNCTION ---
+  const pollAnalysisStatus = async (analysisId: number) => {
+    try {
+      const response = await axios.get(`${API_URL}/api/v1/analysis-status/${analysisId}`, {
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+
+      if (response.data.is_ready) {
+        const analysis = response.data.data;
+        setScore(analysis.score || 0);
+        setSkills(analysis.skills || []);
+        setMissingSkills(analysis.missing_skills || []);
+        setSuggestions(analysis.suggestions || []);
+        setStep('results');
+      } else {
+        // AI still thinking? Check again in 2 seconds
+        setTimeout(() => pollAnalysisStatus(analysisId), 2000);
+      }
+    } catch (error: any) {
+      console.error("Polling error:", error);
+      setErrorMessage("Lost connection to analysis server.");
+      setStep('upload');
+    }
+  };
+
+  // --- RESUME UPLOAD HANDLER ---
+  const handleUpload = async () => {
+    if (!file) {
+      setErrorMessage("Please select a resume file first.");
+      return;
+    }
+
+    setStep('loading');
+    setErrorMessage('');
+
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("job_description", jobDescription);
+
+    try {
+      const response = await axios.post(`${API_URL}/api/v1/upload-resume/`, formData, {
+        headers: {
+          "Content-Type": "multipart/form-data",
+          "Authorization": `Bearer ${token}`
+        },
+      });
+
+      const analysisId = response.data.analysis_id;
+      pollAnalysisStatus(analysisId);
+
+    } catch (error: any) {
+      console.error("Upload error:", error);
+      if (error.response?.status === 401) {
+        handleLogout();
+      } else {
+        setErrorMessage(error.response?.data?.detail || "Something went wrong during upload.");
+        setStep('upload');
+      }
+    }
+  };
+
+  const fetchMyHistory = async () => {
+    setIsLoadingHistory(true);
+    setShowHistory(true);
+    try {
+      const response = await axios.get(`${API_URL}/api/v1/my-history/`, {
+        headers: { "Authorization": `Bearer ${token}` },
+      });
+      setHistory(response.data);
+    } catch (error: any) {
+      console.error("Failed to fetch history:", error);
+      alert(`Error loading history: ${error.response?.data?.detail || error.message}`);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  };
+
+  // --- VIEW RENDERING (The return block remains the same as yours) ---
   if (!token) {
     return (
-      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4 font-sans">
-        <div className="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-md">
-          <h2 className="text-3xl font-extrabold text-center text-slate-800 mb-6">
-            {authMode === 'login' ? 'Welcome Back' : 'Create Account'}
-          </h2>
-          
-          {authError && (
-            <div className={`p-3 rounded-lg text-sm text-center mb-4 font-bold ${authError.includes('successful') ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
-              {authError}
-            </div>
-          )}
-
-          <form onSubmit={handleAuth} className="space-y-4">
-            {authMode === 'signup' && (
-              <input type="text" placeholder="Full Name" value={name} onChange={e => setName(e.target.value)} required className="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none" />
-            )}
-            <input type="email" placeholder="Email Address" value={email} onChange={e => setEmail(e.target.value)} required className="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none" />
-            <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} required className="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none" />
+        /* ... Your Login UI ... */
+        <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4 font-sans">
+          <div className="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-md">
+            <h2 className="text-3xl font-extrabold text-center text-slate-800 mb-6">
+              {authMode === 'login' ? 'Welcome Back' : 'Create Account'}
+            </h2>
             
-            <button type="submit" className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-700 transition-colors shadow-md">
-              {authMode === 'login' ? 'Sign In' : 'Sign Up'}
-            </button>
-          </form>
+            {authError && (
+              <div className={`p-3 rounded-lg text-sm text-center mb-4 font-bold ${authError.includes('successful') ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+                {authError}
+              </div>
+            )}
 
-          <p className="text-center mt-6 text-sm text-slate-500">
-            {authMode === 'login' ? "Don't have an account? " : "Already have an account? "}
-            <button onClick={() => { setAuthMode(authMode === 'login' ? 'signup' : 'login'); setAuthError(''); }} className="text-blue-600 font-bold hover:underline">
-              {authMode === 'login' ? 'Sign up here' : 'Log in here'}
-            </button>
-          </p>
+            <form onSubmit={handleAuth} className="space-y-4">
+              {authMode === 'signup' && (
+                <input type="text" placeholder="Full Name" value={name} onChange={e => setName(e.target.value)} required className="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none" />
+              )}
+              <input type="email" placeholder="Email Address" value={email} onChange={e => setEmail(e.target.value)} required className="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none" />
+              <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} required className="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none" />
+              
+              <button type="submit" className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-700 transition-colors shadow-md">
+                {authMode === 'login' ? 'Sign In' : 'Sign Up'}
+              </button>
+            </form>
+
+            <p className="text-center mt-6 text-sm text-slate-500">
+              {authMode === 'login' ? "Don't have an account? " : "Already have an account? "}
+              <button onClick={() => { setAuthMode(authMode === 'login' ? 'signup' : 'login'); setAuthError(''); }} className="text-blue-600 font-bold hover:underline">
+                {authMode === 'login' ? 'Sign up here' : 'Log in here'}
+              </button>
+            </p>
+          </div>
         </div>
-      </div>
     );
   }
 
-  // ==========================================
-  // VIEW 2: THE SECURE MAIN DASHBOARD
-  // ==========================================
   return (
     <div className="min-h-screen bg-slate-900 flex flex-col items-center py-12 px-4 font-sans text-slate-800">
       
@@ -209,7 +267,6 @@ function App() {
         </button>
       </div>
 
-      {/* --- MAIN WHITE CARD --- */}
       <div className="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-2xl mb-12 min-h-[400px] flex flex-col">
         
         {step === 'upload' && (
@@ -254,16 +311,32 @@ function App() {
           </div>
         )}
 
-        {/* --- THE NEW POLISHED RESULTS UI --- */}
         {step === 'results' && (
           <div className="flex flex-col flex-grow animate-fade-in">
-            
             <div className="bg-slate-50 p-6 rounded-2xl border border-slate-200 mb-8 shadow-sm">
               <div className="flex justify-between items-center mb-4">
                 <h2 className="text-2xl font-extrabold text-slate-800">Match Analysis</h2>
                 <button onClick={resetApp} className="text-sm font-bold text-blue-600 hover:text-blue-800 bg-blue-50 px-4 py-2 rounded-lg transition-colors">
                   + New Analysis
                 </button>
+                <div className="flex justify-between items-center mb-4">
+                  <h2 className="text-2xl font-extrabold text-slate-800">Match Analysis</h2>
+                  <div className="flex gap-2">
+                    <button 
+                      onClick={generatePDF} 
+                      className="text-sm font-bold text-white bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg transition-colors shadow-sm"
+                    >
+                  Download PDF
+                </button>
+    <button 
+      onClick={resetApp} 
+      className="text-sm font-bold text-blue-600 hover:text-blue-800 bg-blue-50 px-4 py-2 rounded-lg transition-colors"
+    >
+      + New Analysis
+    </button>
+  </div>
+</div>
+
               </div>
               
               <div className="mt-2">
@@ -327,9 +400,8 @@ function App() {
             </div>
           </div>
         )}
-      </div> {/* <-- THIS IS THE DIV THAT WENT MISSING */}
+      </div>
 
-      {/* --- SECURE HISTORY PANEL --- */}
       <div className="w-full max-w-2xl flex flex-col items-center">
         <button 
           onClick={() => {
@@ -343,8 +415,6 @@ function App() {
 
         {showHistory && (
           <div className="w-full bg-slate-800 p-6 rounded-xl border border-slate-700 animate-fade-in shadow-xl text-left">
-            
-            {/* DETAILS VIEW */}
             {selectedReport ? (
               <div className="animate-fade-in">
                 <div className="flex justify-between items-center mb-4 border-b border-slate-600 pb-2">
@@ -398,11 +468,8 @@ function App() {
                 </div>
               </div>
             ) : (
-              
-              /* LIST VIEW */
               <div>
                 <h3 className="text-lg font-bold text-white mb-4 border-b border-slate-600 pb-2">My Saved Reports</h3>
-                
                 {isLoadingHistory ? (
                   <div className="flex justify-center items-center py-10">
                     <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
