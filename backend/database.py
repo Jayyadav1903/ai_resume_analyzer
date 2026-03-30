@@ -1,6 +1,7 @@
 from sqlalchemy import create_engine, Column, Integer, String, Text, ForeignKey, JSON
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
+from sqlalchemy.dialects.postgresql import JSONB
 
 import os
 from dotenv import load_dotenv
@@ -46,9 +47,9 @@ class ResumeAnalysis(Base):
     status = Column(String,default="processing")
     
     # We use the JSON column type to store the arrays of strings sent by the AI
-    skills = Column(JSON)                             
-    missing_skills = Column(JSON)                     
-    suggestions = Column(JSON)
+    skills = Column(JSONB, default=[])                             
+    missing_skills = Column(JSONB, default=[])                     
+    suggestions = Column(JSONB, default=[])
     
     # Establish the relationship back to the user object in Python
     owner = relationship("User", back_populates="analyses")
