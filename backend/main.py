@@ -289,15 +289,18 @@ async def upload_resume(
         extracted_text = extract_text_from_docx(file_path)
     
     # 3. Create a placeholder record in the DB    
+   
+# inside upload_resume...
     new_analysis = ResumeAnalysis(
-            user_id=current_user.id,
-            job_description=job_description,
-            score=0,
-            status="processing",
-            skills=[],
-            missing_skills=[],
-            suggestions=[]
-        )
+    user_id=current_user.id,
+    job_description=job_description or "",
+    score=0,
+    status="processing",
+    # Wrap the empty lists in json.dumps() to ensure they are valid JSON strings
+    skills=json.dumps([]),
+    missing_skills=json.dumps([]),
+    suggestions=json.dumps([])
+)
     db.add(new_analysis)
     db.commit()
     db.refresh(new_analysis)
