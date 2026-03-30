@@ -106,12 +106,13 @@ function App() {
       });
 
       if (response.data.is_ready) {
-        const analysis = response.data.data;
-        setScore(analysis.score || 0);
-        setSkills(analysis.skills || []);
-        setMissingSkills(analysis.missing_skills || []);
-        setSuggestions(analysis.suggestions || []);
-        setStep('results');
+      const rawData = response.data.data; 
+      setScore(rawData.score || 0);
+      setSkills(rawData.skills || []);
+      setMissingSkills(rawData.missing_skills || []); 
+      setSuggestions(rawData.suggestions || []);
+      
+      setStep('results');
       } else {
         setTimeout(() => pollAnalysisStatus(analysisId), 2000);
       }
