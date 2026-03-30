@@ -9,6 +9,24 @@ type AuthMode = 'login' | 'signup';
 function App() {
   const API_URL = "https://ai-resume-analyzer-2apu.onrender.com";
 
+  // --- STATE ---
+  const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
+  const [authMode, setAuthMode] = useState<AuthMode>('login');
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [authError, setAuthError] = useState('');
+
+  const [step, setStep] = useState<AppStep>('upload');
+  const [file, setFile] = useState<File | null>(null);
+  const [jobDescription, setJobDescription] = useState<string>('');
+  const [errorMessage, setErrorMessage] = useState<string>('');
+
+  const [score, setScore] = useState<number>(0);
+  const [skills, setSkills] = useState<string[]>([]);
+  const [missingSkills, setMissingSkills] = useState<string[]>([]);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+
   // --- PDF GENERATION LOGIC ---
   const generatePDF = () => {
     const doc = new jsPDF();
@@ -57,24 +75,6 @@ function App() {
     doc.save(`Resume_Analysis_${timestamp.replace(/\//g, '_')}.pdf`);
   };
 
-  // --- STATE ---
-  const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
-  const [authMode, setAuthMode] = useState<AuthMode>('login');
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [authError, setAuthError] = useState('');
-
-  const [step, setStep] = useState<AppStep>('upload');
-  const [file, setFile] = useState<File | null>(null);
-  const [jobDescription, setJobDescription] = useState<string>('');
-  const [errorMessage, setErrorMessage] = useState<string>('');
-
-  const [score, setScore] = useState<number>(0);
-  const [skills, setSkills] = useState<string[]>([]);
-  const [missingSkills, setMissingSkills] = useState<string[]>([]);
-  const [suggestions, setSuggestions] = useState<string[]>([]);
-
   // --- HANDLERS ---
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -99,47 +99,35 @@ function App() {
     }
   };
 
-  const pollAnalysisStatus = async (analysisId: number) => {
-    try {
-      const response = await axios.get(`${API_URL}/api/v1/analysis-status/${analysisId}`, {
-        headers: { "Authorization": `Bearer ${token}` }
-      });
-
-      if (response.data.is_ready) {
-      const rawData = response.data.data; 
-      setScore(rawData.score || 0);
-      setSkills(rawData.skills || []);
-      setMissingSkills(rawData.missing_skills || []); 
-      setSuggestions(rawData.suggestions || []);
-      
-      setStep('results');
-      } else {
-        setTimeout(() => pollAnalysisStatus(analysisId), 2000);
-      }
-    } catch (error) {
-      setErrorMessage("Lost connection to server.");
-      setStep('upload');
-    }
-  };
-
   const handleUpload = async () => {
     if (!file) return;
     setStep('loading');
     setErrorMessage('');
+
     const formData = new FormData();
     formData.append("file", file);
     formData.append("job_description", jobDescription);
 
     try {
+      // In the stable version, we wait for this request to finish with ALL the data
       const response = await axios.post(`${API_URL}/api/v1/upload-resume/`, formData, {
         headers: {
           "Content-Type": "multipart/form-data",
           "Authorization": `Bearer ${token}`
         },
       });
-      if (response.data.analysis_id) pollAnalysisStatus(response.data.analysis_id);
-    } catch (error) {
-      setErrorMessage("Upload failed.");
+
+      // Directly update the state from the backend's immediate response
+      const data = response.data;
+      setScore(data.score || 0);
+      setSkills(data.skills || []);
+      setMissingSkills(data.missing_skills || []);
+      setSuggestions(data.suggestions || []);
+      
+      setStep('results');
+    } catch (error: any) {
+      console.error("Upload error:", error);
+      setErrorMessage(error.response?.data?.detail || "Upload failed. Please try again.");
       setStep('upload');
     }
   };
@@ -155,15 +143,54 @@ function App() {
     return (
       <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4">
         <div className="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-md">
-          <h2 className="text-3xl font-extrabold text-center text-slate-800 mb-6">{authMode === 'login' ? 'Welcome Back' : 'Create Account'}</h2>
-          {authError && <div className="p-3 rounded-lg text-sm text-center mb-4 bg-red-100 text-red-700 font-bold">{authError}</div>}
+          <h2 className="text-3xl font-extrabold text-center text-slate-800 mb-6">
+            {authMode === 'login' ? 'Welcome Back' : 'Create Account'}
+          </h2>
+          {authError && (
+            <div className="p-3 rounded-lg text-sm text-center mb-4 bg-red-100 text-red-700 font-bold">
+              {authError}
+            </div>
+          )}
           <form onSubmit={handleAuth} className="space-y-4">
-            {authMode === 'signup' && <input type="text" placeholder="Full Name" value={name} onChange={e => setName(e.target.value)} required className="w-full px-4 py-3 border rounded-xl" />}
-            <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} required className="w-full px-4 py-3 border rounded-xl" />
-            <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} required className="w-full px-4 py-3 border rounded-xl" />
-            <button type="submit" className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-700 transition-colors">{authMode === 'login' ? 'Sign In' : 'Sign Up'}</button>
+            {authMode === 'signup' && (
+              <input 
+                type="text" 
+                placeholder="Full Name" 
+                value={name} 
+                onChange={e => setName(e.target.value)} 
+                required 
+                className="w-full px-4 py-3 border rounded-xl" 
+              />
+            )}
+            <input 
+              type="email" 
+              placeholder="Email" 
+              value={email} 
+              onChange={e => setEmail(e.target.value)} 
+              required 
+              className="w-full px-4 py-3 border rounded-xl" 
+            />
+            <input 
+              type="password" 
+              placeholder="Password" 
+              value={password} 
+              onChange={e => setPassword(e.target.value)} 
+              required 
+              className="w-full px-4 py-3 border rounded-xl" 
+            />
+            <button 
+              type="submit" 
+              className="w-full bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-700 transition-colors"
+            >
+              {authMode === 'login' ? 'Sign In' : 'Sign Up'}
+            </button>
           </form>
-          <button onClick={() => setAuthMode(authMode === 'login' ? 'signup' : 'login')} className="w-full text-center mt-6 text-blue-600 font-bold underline">{authMode === 'login' ? 'Sign up here' : 'Log in here'}</button>
+          <button 
+            onClick={() => setAuthMode(authMode === 'login' ? 'signup' : 'login')} 
+            className="w-full text-center mt-6 text-blue-600 font-bold underline"
+          >
+            {authMode === 'login' ? 'Sign up here' : 'Log in here'}
+          </button>
         </div>
       </div>
     );
@@ -172,21 +199,47 @@ function App() {
   return (
     <div className="min-h-screen bg-slate-900 flex flex-col items-center py-12 px-4 font-sans">
       <div className="w-full max-w-2xl flex justify-between items-center mb-8">
-        <h1 className="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500">AI Resume Analyzer</h1>
-        <button onClick={handleLogout} className="text-sm bg-slate-800 text-slate-300 px-4 py-2 rounded-lg border border-slate-700">Logout</button>
+        <h1 className="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500">
+          AI Resume Analyzer
+        </h1>
+        <button onClick={handleLogout} className="text-sm bg-slate-800 text-slate-300 px-4 py-2 rounded-lg border border-slate-700">
+          Logout
+        </button>
       </div>
 
       <div className="bg-white p-8 rounded-2xl shadow-2xl w-full max-w-2xl mb-12">
         {step === 'upload' && (
           <div className="animate-fade-in">
             <h2 className="text-2xl font-bold mb-6 text-center text-slate-800">New Analysis</h2>
-            <textarea value={jobDescription} onChange={(e) => setJobDescription(e.target.value)} placeholder="Paste Job Description here..." className="w-full h-32 px-4 py-3 bg-slate-50 border rounded-xl mb-6 text-slate-700" />
+            <textarea 
+              value={jobDescription} 
+              onChange={(e) => setJobDescription(e.target.value)} 
+              placeholder="Paste Job Description here..." 
+              className="w-full h-32 px-4 py-3 bg-slate-50 border rounded-xl mb-6 text-slate-700" 
+            />
             <div className="w-full border-2 border-dashed rounded-xl p-8 bg-slate-50 relative text-center border-slate-300">
-              <input type="file" onChange={(e) => setFile(e.target.files ? e.target.files[0] : null)} className="absolute inset-0 opacity-0 cursor-pointer" accept=".pdf,.docx" />
-              <p className="text-slate-600 font-medium">{file ? file.name : "Click or drag resume here"}</p>
+              <input 
+                type="file" 
+                onChange={(e) => setFile(e.target.files ? e.target.files[0] : null)} 
+                className="absolute inset-0 opacity-0 cursor-pointer" 
+                accept=".pdf,.docx" 
+              />
+              <p className="text-slate-600 font-medium">
+                {file ? file.name : "Click or drag resume here"}
+              </p>
             </div>
-            {errorMessage && <div className="mt-4 p-3 bg-red-50 text-red-600 rounded-lg text-center font-bold">{errorMessage}</div>}
-            <button onClick={handleUpload} disabled={!file} className="w-full mt-6 bg-blue-600 text-white font-bold py-3 rounded-xl shadow-lg disabled:bg-slate-200">Analyze Resume</button>
+            {errorMessage && (
+              <div className="mt-4 p-3 bg-red-50 text-red-600 rounded-lg text-center font-bold">
+                {errorMessage}
+              </div>
+            )}
+            <button 
+              onClick={handleUpload} 
+              disabled={!file} 
+              className="w-full mt-6 bg-blue-600 text-white font-bold py-3 rounded-xl shadow-lg disabled:bg-slate-200"
+            >
+              Analyze Resume
+            </button>
           </div>
         )}
 
@@ -194,6 +247,7 @@ function App() {
           <div className="flex flex-col items-center justify-center h-64">
             <div className="w-16 h-16 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mb-4"></div>
             <h2 className="text-xl font-bold text-slate-800">AI is analyzing...</h2>
+            <p className="text-slate-500 text-sm mt-2">This may take 10-15 seconds.</p>
           </div>
         )}
 
@@ -202,10 +256,15 @@ function App() {
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-2xl font-bold text-slate-800">Results</h2>
               <div className="flex gap-2">
-                <button onClick={generatePDF} className="bg-green-600 text-white px-4 py-2 rounded-lg font-bold text-sm hover:bg-green-700 shadow-md">Download PDF</button>
-                <button onClick={() => setStep('upload')} className="bg-blue-50 text-blue-600 px-4 py-2 rounded-lg font-bold text-sm hover:bg-blue-100">New</button>
+                <button onClick={generatePDF} className="bg-green-600 text-white px-4 py-2 rounded-lg font-bold text-sm hover:bg-green-700 shadow-md">
+                  Download PDF
+                </button>
+                <button onClick={() => setStep('upload')} className="bg-blue-50 text-blue-600 px-4 py-2 rounded-lg font-bold text-sm hover:bg-blue-100">
+                  New
+                </button>
               </div>
             </div>
+            
             <div className="bg-slate-50 p-6 rounded-2xl mb-8 border border-slate-200 text-center">
                <span className="text-xs font-bold text-slate-500 tracking-widest uppercase">Match Score</span>
                <div className="text-5xl font-black text-blue-600 mt-2">{score}%</div>
@@ -220,6 +279,13 @@ function App() {
                   <h4 className="font-bold text-red-700 mb-2">Missing Skills</h4>
                   <p className="text-sm text-red-800">{missingSkills.join(', ') || "None identified"}</p>
                </div>
+            </div>
+
+            <div className="p-4 bg-blue-50 rounded-xl border border-blue-100">
+              <h4 className="font-bold text-blue-700 mb-2">Suggestions</h4>
+              <ul className="list-disc list-inside text-sm text-blue-800 space-y-1">
+                {suggestions.map((s, i) => <li key={i}>{s}</li>)}
+              </ul>
             </div>
           </div>
         )}
