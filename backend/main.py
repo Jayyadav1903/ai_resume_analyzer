@@ -293,6 +293,7 @@ async def upload_resume(
             user_id=current_user.id,
             job_description=job_description,
             score=0,
+            status="processing",
             skills=[],
             missing_skills=[],
             suggestions=[]
