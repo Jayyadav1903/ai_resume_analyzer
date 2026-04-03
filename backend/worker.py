@@ -14,7 +14,13 @@ load_dotenv()
 
 # 1. Initialize Celery (Connecting it to Redis)
 redis_url = os.getenv("REDIS_URL")
-celery_app = Celery("resume_worker", broker=redis_url, backend=redis_url)
+
+if "rediss//" in redis_url:
+    celery_url = f"{redis_url}?ssl_cert_reqs=CERT_NONE"
+else:
+    celery_url = redis_url
+
+celery_app = Celery("resume_worker", broker=celery_url, backend=celery_url)
 redis_client = redis.from_url(redis_url, decode_responses=True)
 
 #2. Define the Background Task with Failure Handling 
