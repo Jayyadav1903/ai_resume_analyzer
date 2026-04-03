@@ -7,7 +7,7 @@ type AppStep = 'upload' | 'loading' | 'results';
 type AuthMode = 'login' | 'signup';
 
 function App() {
-  const API_URL = "http://localhost:8000";
+  const API_URL = "https://ai-resume-analyzer-tk21.onrender.com";
   
   // --- STATE (Unchanged) ---
   const [token, setToken] = useState<string | null>(localStorage.getItem('token'));
