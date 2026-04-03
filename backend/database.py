@@ -1,4 +1,5 @@
-from sqlalchemy import create_engine, Column, Integer, String, Text, ForeignKey
+import datetime
+from sqlalchemy import create_engine, Column, Integer, String, Text, ForeignKey, DateTime
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from sqlalchemy.dialects.postgresql import JSONB # Best for Neon/Postgres
@@ -8,8 +9,15 @@ from dotenv import load_dotenv
 load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-engine = create_engine(DATABASE_URL, echo=True)
+engine = create_engine(
+    DATABASE_URL, 
+    echo=True, 
+    pool_pre_ping=True,  # Checks if connection is alive before querying
+    pool_recycle=300     # Recycles connections every 5 minutes to keep Neon happy
+)
+
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
 Base = declarative_base()
 
 class User(Base):
@@ -19,25 +27,22 @@ class User(Base):
     email = Column(String, unique=True)
     hashed_password = Column(String)
     
-    # Matches the back_populates in ResumeAnalysis
-    analyses = relationship("ResumeAnalysis", back_populates="owner")
+    # Matches the back_populates in AnalysisJob
+    jobs = relationship("AnalysisJob", back_populates="owner")
 
-class ResumeAnalysis(Base):
-    __tablename__= "resume_analysis"    
-    id = Column(Integer, primary_key=True, index=True)
+class AnalysisJob(Base):
+    __tablename__ = "analysis_jobs"
+    
+    id =Column(Integer, primary_key = True,index=True)
     user_id = Column(Integer, ForeignKey("users.id"))
     
-    job_description = Column(Text, nullable=True)     
-    score = Column(Integer)
+    status = Column(String, default = "pending")
     
-    # REMOVED 'status' here to match the stable/synchronous flow
+    result = Column(JSONB, nullable = True)
     
-    # Using JSONB is perfect for storing lists like ["Python", "Django"]
-    skills = Column(JSONB, default=[])                             
-    missing_skills = Column(JSONB, default=[])                     
-    suggestions = Column(JSONB, default=[])
+    created_at = Column(DateTime, default = datetime.datetime.utcnow)
     
-    owner = relationship("User", back_populates="analyses")
+    owner = relationship("User", back_populates="jobs")
 
 if __name__ == "__main__":
     try:

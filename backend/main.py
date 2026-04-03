@@ -10,12 +10,14 @@ from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import sessionmaker, Session
 from pydantic import BaseModel, EmailStr, Field
-from google import genai
-from google.genai import types
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 # Local Imports (Ensure these files exist in your folder!)
-from database import engine, User, ResumeAnalysis
-from security import get_password_hash, verify_password, create_access_token, SECRET_KEY, ALGORITHM
+from database import engine, User, AnalysisJob
+from security import get_password_hash, verify_password, create_access_token
+from worker import process_resume_task
 
 load_dotenv()
 
@@ -25,6 +27,13 @@ UPLOAD_DIR = "uploaded_resumes"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 app = FastAPI()
+
+# --- RATE LIMITING ---
+REDIS_URL = os.getenv("REDIS_URL")
+
+limiter = Limiter(key_func=get_remote_address, storage_url=REDIS_URL)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded,_rate_limit_exceeded_handler)
 
 # --- CORS ---
 origins = [
@@ -106,13 +115,45 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     token = create_access_token(data={"sub": user.email})
     return {"access_token": token, "token_type": "bearer"}
 
-@app.post("/api/v1/upload-resume/")
-async def upload_resume(
+ALLOWED_EXTENSIONS = {"application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "text/plain"}
+MAX_FILE_SIZE_MB = 5
+MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024
+
+@app.post("/api/v1/analyze/")
+@limiter.limit("5/minute")
+async def analyze_resume(
+    request: Request,
     file: UploadFile = File(...),
     job_description: str = Form(""),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    
+    """
+    Step 1 of the Async Flow:
+    Accept the file, extract the text, create a pending job in the DB, 
+    hand it off to Celery, and respond to the user immediately.
+    """
+    # --- Phase 3 File Validation (The Bouncer) ---
+    #1. Validate File Type
+    if file.content_type not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code = 400,
+            detail="Invalid file type. Only PDF, DOCX, and TXT are allowed."
+        )
+        
+    file_bytes = await file.read()
+    if len(file_bytes) > MAX_FILE_SIZE_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File too large. Max size is {MAX_FILE_SIZE_MB} MB."
+        )    
+    
+    # 3. Rewind the file pointer! 
+    # Because we read the file to check its size, we have to reset it so `shutil.copyfileobj` works.
+    await file.seek(0)
+    # ---------------------------------------------------
+    
     # 1. Save File
     file_path = os.path.join(UPLOAD_DIR, file.filename)
     with open(file_path, "wb") as buffer:
@@ -120,33 +161,43 @@ async def upload_resume(
         
     # 2. Extract Text
     text = extract_text_from_pdf(file_path) if file.filename.endswith('.pdf') else extract_text_from_docx(file_path)
-
-    # 3. AI Analysis (Immediate/Synchronous)
-    try:
-        client = genai.Client()
-        prompt = f"Analyze resume: {text}. Job Description: {job_description}. Return JSON: score (0-100), skills (list), missing_skills (list), suggestions (list)."
-        
-        response = client.models.generate_content(
-            model='gemini-2.0-flash', 
-            contents=prompt,
-            config=types.GenerateContentConfig(response_mime_type="application/json")
-        )
-        ai_data = json.loads(response.text)
-    except Exception as e:
-        print(f"AI Quota Error: {e}") # This will print to Render logs
-        # This stops the 500 crash and sends a clean error to React
-        raise HTTPException(status_code=429, detail="AI is busy or out of quota. Please try again later.")
-        
-    # 4. Save to DB
-    new_analysis = ResumeAnalysis(
-        user_id=current_user.id,
-        job_description=job_description,
-        score=ai_data.get("score", 0),
-        skills=ai_data.get("skills", []),
-        missing_skills=ai_data.get("missing_skills", []),
-        suggestions=ai_data.get("suggestions", [])
-    )
-    db.add(new_analysis)
+    
+    
+    # 3. Create a pending Job in the Database
+    new_job = AnalysisJob(user_id=current_user.id,status="pending")
+    
+    db.add(new_job)
     db.commit()
+    db.refresh(new_job)
+    
+    #4 Trigger the Background Worker
+    # .delay() sends the task to Redis/Celery without blocking the API
+    process_resume_task.delay(new_job.id, text, job_description)
+    
+    #5 Return immediately! No more waiting for the AI to respond before we reply to the user.
+    return {
+        "job_id": new_job.id,
+        "message": "Analysis queued. Polling required to get results."
+    }
 
-    return ai_data
+@app.get("/api/v1/job/{job_id}")
+@limiter.limit("30/minute")
+def get_job_status(
+    request: Request,
+    job_id: int, 
+    db: Session = Depends(get_db), 
+    current_user: User = Depends(get_current_user)
+):
+    # Notice we removed the user_id == current_user.id check temporarily
+    job = db.query(AnalysisJob).filter(AnalysisJob.id == job_id).first()
+    
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found in database")
+        
+    return {
+        "job_id": job.id,
+        "status": job.status,
+        "result": job.result
+    }
+        
+    
