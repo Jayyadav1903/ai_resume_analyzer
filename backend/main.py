@@ -24,8 +24,6 @@ load_dotenv()
 
 # --- SETUP ---
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-UPLOAD_DIR = "uploaded_resumes"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 app = FastAPI()
 
