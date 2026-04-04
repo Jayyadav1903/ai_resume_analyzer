@@ -24,7 +24,7 @@ services:
     env_file:
       - .env
     environment:
-      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=rediss://default:gQAAAAAAAS6NAAIncDExN2I3ZjRjMjgzZTA0N2QyYWY3NWMwZWEwZjJjMjRjMHAxNzc0NTM@glowing-pelican-77453.upstash.io:6379
     depends_on:
       - redis
       - web

@@ -1,9 +1,13 @@
 import os
+import time
+import logging
 import json
 import hashlib
 import redis
 import ssl
 from celery import Celery
+from celery.signals import task_prerun, task_postrun, task_failure
+from datetime import datetime, timezone
 from google import genai
 from google.genai import types
 from database import SessionLocal, AnalysisJob
@@ -12,10 +16,15 @@ from rag import find_relevant_resume_sections
 
 load_dotenv()
 
+logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s | %(levelname)s | %(message)s'
+                    )
+logger = logging.getLogger("working_monitor")
+
 # 1. Initialize Celery (Connecting it to Redis)
 redis_url = os.getenv("REDIS_URL")
 
-celery_app = Celery("resume_worker", broker=redis_url, backend=redis_url)
+celery_app = Celery("worker", broker=redis_url, backend=redis_url)
 
 
 if redis_url.startswith("rediss://"):
@@ -25,6 +34,30 @@ if redis_url.startswith("rediss://"):
     )
 
 redis_client = redis.from_url(redis_url, decode_responses=True)
+
+
+task_metrics = {}
+            
+@task_prerun.connect
+def task_started(task_id, task, *args, **kwargs):
+    job_id = kwargs.get('job_id') or (args[0] if args else "unknown")
+    task_metrics[task_id] = {'start_time' : time.time(), 'job_id' : job_id}
+    logger.info(f"STARTING | Task : {task_id} | Job DB ID : {job_id}")             
+
+@task_postrun.connect                 
+def task_finished(task_id, task, args, retval, state,  **kwargs):
+    if task_id in task_metrics:
+        duration = time.time() - task_metrics[task_id]['start_time']
+        job_id = kwargs.get('job_id') or (args[0] if args else "unknown")
+        logger.info(f"COMPLETED | Task: {task_id} | Job DB ID: {job_id} | State: {state} | Duration: {duration:.2f}s ")                 
+        del task_metrics[task_id]
+        
+@task_failure.connect
+def task_failed(task_id, exception, args,traceback, **kwargs):
+    job_id = args[0] if args else "unknown"
+    logger.error(f"FAILED | Task: {task_id} | Job DB ID: {job_id} | Error: {str(exception)} ")  
+    if task_id in task_metrics:
+        del task_metrics[task_id]      
 
 #2. Define the Background Task with Failure Handling 
 # bind=True allows us to use self.retry
@@ -99,7 +132,7 @@ def process_resume_task(self,job_id:int, extracted_text: str, job_description: s
         else:
             job.status = "failed"
             job.result = {"error": "An internal error occurred during analysis."}
-            db.commit()     
-                
+            db.commit()   
+            
     finally:
         db.close()            
